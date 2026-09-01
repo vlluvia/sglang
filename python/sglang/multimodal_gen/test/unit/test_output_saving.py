@@ -172,6 +172,31 @@ def test_x264_auto_thread_count(monkeypatch, height, available_cpus, expected_th
     assert output_utils._x264_auto_thread_count(height) == expected_threads
 
 
+def test_cuda_direct_save_is_disabled_on_rocm(tmp_path, monkeypatch):
+    monkeypatch.setattr(output_utils.torch.version, "hip", "6.3")
+    sample = torch.zeros((3, 2, 2, 3))
+    output_path = tmp_path / "sample.mp4"
+
+    assert not output_utils._try_save_cuda_video_direct(
+        save_file_path=str(output_path),
+        sample=sample,
+        fps=24,
+        audio_sample_rate=None,
+        output_compression=None,
+    )
+    assert (
+        output_utils._try_save_cuda_videos_direct(
+            [sample, sample],
+            [str(output_path), str(tmp_path / "sample_2.mp4")],
+            fps=24,
+            audio_sample_rate=None,
+            output_compression=None,
+        )
+        is None
+    )
+    assert not output_path.exists()
+
+
 def test_video_direct_save_short_circuits_materialization(tmp_path, monkeypatch):
     output_path = tmp_path / "sample.mp4"
     direct_calls = []

@@ -55,6 +55,16 @@ _cuda_video_buffer_cache_lock = threading.Lock()
 _cached_cuda_video_buffer: "_CudaMemfdVideoBuffer | None" = None
 
 
+def _cuda_video_direct_save_supported() -> bool:
+    """Whether the CUDA-specific registered-memfd save path is safe to use.
+
+    PyTorch exposes ROCm devices through the ``cuda`` device API, so checking
+    ``tensor.device.type == "cuda"`` alone also selects this path on AMD GPUs.
+    The registered host-memory path is currently only validated on native CUDA.
+    """
+    return getattr(torch.version, "hip", None) is None
+
+
 class _CudaMemfdVideoBuffer:
     """CUDA-registered memfd used as direct ffmpeg raw-video input."""
 
@@ -495,6 +505,8 @@ def _try_save_cuda_video_direct(
     output_compression: Optional[int],
 ) -> bool:
     """Stream CUDA RGB chunks to ffmpeg through a registered memfd."""
+    if not _cuda_video_direct_save_supported():
+        return False
     if not hasattr(os, "memfd_create") or not hasattr(os, "sendfile"):
         return False
 
@@ -663,6 +675,8 @@ def _try_save_cuda_videos_direct(
     output_compression: Optional[int],
 ) -> list[bool] | None:
     """Save independent CUDA videos concurrently when memory permits."""
+    if not _cuda_video_direct_save_supported():
+        return None
     if len(samples) < 2 or len(samples) != len(save_file_paths):
         return None
 
@@ -899,17 +913,8 @@ def prepare_request(
     if diffusers_kwargs and "max_sequence_length" in diffusers_kwargs:
         req.max_sequence_length = diffusers_kwargs["max_sequence_length"]
 
-    action_prompt = (
-        req.data_type == DataType.ACTION
-        and isinstance(req.prompt, list)
-        and bool(req.prompt)
-        and all(isinstance(item, str) for item in req.prompt)
-    )
-    if not isinstance(req.prompt, str) and not action_prompt:
-        raise TypeError(
-            "`prompt` must be a string, or a non-empty list of strings for "
-            f"batched action requests, but got {type(req.prompt)}"
-        )
+    if not isinstance(req.prompt, str):
+        raise TypeError(f"`prompt` must be a string, but got {type(req.prompt)}")
 
     req_width = getattr(req, "width", None)
     req_height = getattr(req, "height", None)
